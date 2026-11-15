@@ -4,11 +4,11 @@ A [Polyend Endless](https://polyend.com/endless/) patch for the most Matt Pike g
 That means a Les Paul tuned way down into cranked valve stacks, making a slow, thick, mid-forward wall of amp distortion that never gets scooped or fizzy.
 It's written in `no_std` Rust against the patch ABI of Polyend's [FxPatchSDK](https://github.com/polyend/FxPatchSDK) (ABI 0x000B), so no ARM GCC is needed.
 
-The guitar (left jack) goes through a gentle gate into **two full stacks in stereo**:
+The guitar (left jack) goes into **two full stacks at once**, one per side, like running one guitar into several heads. There's no gate: the wall hums and rings out.
 
 - **Left: "Orange" voicing.** A biased triode preamp (asymmetric, warm clipping) into a second gain stage, a mid-forward tone stack and a power amp that **sags** on hard hits, so chords compress
   and bloom. Power-amp resonance brings the low end back after the clipping.
-- **Right: "Matamp" voicing.** The same circuit with fatter low-mids and more sag. It's fed a second "take", ~23 ms late and slowly drifting, so the wall is **double-tracked** across the two sides.
+- **Right: "Matamp" voicing.** The same circuit with fatter low-mids and more sag.
 
 Each stack goes through its own 4x12 cab sim, voiced low for C tuning.
 
@@ -17,7 +17,7 @@ Each stack goes through its own 4x12 cab sim, voiced low for C tuning.
 | Left knob | **Gain**: preamp gain, about 14 to 44 dB |
 | Mid knob | **Tone**: amp treble. CCW = dark and woolly, CW = cutting |
 | Right knob | **Level**: output, unity at 3 o'clock |
-| Footswitch press | **Riff ↔ Lead**. Lead adds +6 dB gain, an 800 Hz mid push, a half-cocked wah peak at 1.1 kHz, +2 dB level and a dark ~375 ms echo |
+| Footswitch press | **Riff ↔ Lead**. Lead parks a wah half-cocked in front of the amps (a +9 dB resonant peak at 1 kHz) and adds +2.5 dB level |
 | Footswitch hold | **Muff**: a Big Muff-style fuzz stacked in front of the amps, for an even thicker wall |
 
 | LED | Normal | Muff |

@@ -96,7 +96,7 @@ fn score() -> (Score, f64) {
         play_bar(&mut ev, &mut t, &mut slop, bar);
     }
     ev.push((t, Ev::Hold, ""));
-    ev.push((t, Ev::Press, "lead (mid push, wah peak, echo)"));
+    ev.push((t, Ev::Press, "lead (half-cocked wah)"));
     // (note, beats, bend cents, slide semitones, vibrato)
     let lead: [(f32, f64, f32, f32, bool); 12] = [
         (G3, 1.0, 0.0, 2.0, true),
