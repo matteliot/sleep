@@ -9,7 +9,7 @@
 //!     Right  "Matamp" voicing   }  tone stack, sagging power amp
 //!   -> a 4x12 per side -> output level.
 //!
-//! Controls (`controls`, `entry`)
+//! Controls (`Patch::PARAMS`; entry points from `pedalkit::endless_patch!`)
 //!   Left knob   Gain   (preamp gain, ~14 to 44 dB)
 //!   Mid knob    Tone   (amp treble: CCW dark and woolly, CW cutting)
 //!   Right knob  Level  (output; unity at 3 o'clock)
@@ -25,13 +25,10 @@
 /// Reusable blocks (effects, DSP, the Endless ABI); see its docs.
 mod pedalkit;
 
-mod controls;
-mod entry;
-mod patch;
-mod presets;
+/// The pedal itself.
+mod sleep;
 
-#[cfg(target_os = "none")]
-mod header;
+endless_patch!(kit = crate::pedalkit, pedal = crate::sleep::Patch);
 
 #[cfg(not(target_os = "none"))]
 mod host;

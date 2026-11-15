@@ -1,6 +1,9 @@
 //! Stereo 32-bit float WAV writer (48 kHz).
 
 pub fn write_wav(path: &str, l: &[f32], r: &[f32]) {
+    if let Some(dir) = std::path::Path::new(path).parent() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
     let bytes = (l.len() * 8) as u32;
     let mut b = Vec::new();
     b.extend_from_slice(b"RIFF");

@@ -34,6 +34,11 @@ impl Smooth {
         self.v = self.t;
     }
 
+    /// The current value.
+    pub fn value(&self) -> f32 {
+        self.v
+    }
+
     /// One sample of glide; returns the new value.
     #[inline]
     pub fn tick(&mut self) -> f32 {
@@ -75,4 +80,56 @@ impl Clip2x {
         self.prev = u;
         y
     }
+}
+
+/// Output soft limiter, never reaching ±1.
+#[inline]
+pub fn limit(x: f32) -> f32 {
+    super::dsp::tanh(x) * 0.98
+}
+
+/// A phase accumulator in 0..1.
+pub struct Phase {
+    pub p: f32,
+}
+
+impl Phase {
+    pub const fn new(p: f32) -> Self {
+        Self { p }
+    }
+
+    /// Advances by `inc` (cycles), wrapping once; returns the new phase.
+    #[inline]
+    pub fn step(&mut self, inc: f32) -> f32 {
+        self.p += inc;
+        if self.p >= 1.0 {
+            self.p -= 1.0;
+        }
+        self.p
+    }
+}
+
+/// Hard clipper: cubic knee, flat beyond |u| = 1.5.
+#[inline]
+pub fn hard(u: f32) -> f32 {
+    let c = (u * (1.0 / 1.5)).clamp(-1.0, 1.0);
+    1.5 * c - 0.5 * c * c * c
+}
+
+/// Biased tube-style saturation, zero at rest: `tanh(u + bias) - tanh(bias)`.
+#[inline]
+pub fn biased(u: f32, bias: f32) -> f32 {
+    super::dsp::tanh(u + bias) - super::dsp::tanh(bias)
+}
+
+/// Soft-knee limiter: transparent below `knee`, approaching ±1 above it.
+#[inline]
+pub fn soft_limit(x: f32, knee: f32) -> f32 {
+    let a = x.abs();
+    if a <= knee {
+        return x;
+    }
+    let over = (a - knee) / (1.0 - knee);
+    let y = knee + (1.0 - knee) * over / (1.0 + over);
+    if x < 0.0 { -y } else { y }
 }

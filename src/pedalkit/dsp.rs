@@ -26,6 +26,22 @@ pub fn sin(x: f32) -> f32 {
             + r2 * (8.333_333e-3 + r2 * (-1.984_127e-4 + r2 * (2.755_732e-6 + r2 * -2.505_211e-8)))))
 }
 
+/// Square root (bit-trick start, three Newton steps; relative error < 1e-7).
+pub fn sqrt(x: f32) -> f32 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let mut y = f32::from_bits((x.to_bits() >> 1) + 0x1fbd_1df5);
+    y = 0.5 * (y + x / y);
+    y = 0.5 * (y + x / y);
+    0.5 * (y + x / y)
+}
+
+/// x^y for x >= 0 (0^y = 0).
+pub fn powf(x: f32, y: f32) -> f32 {
+    if x <= 0.0 { 0.0 } else { exp2_hq(y * log2(x)) }
+}
+
 pub fn cos(x: f32) -> f32 {
     sin(x + FRAC_PI_2)
 }
@@ -52,6 +68,26 @@ pub fn log2(x: f32) -> f32 {
 
 pub fn exp(x: f32) -> f32 {
     exp2(x * LOG2_E)
+}
+
+/// 2^x to near f32 precision (relative error < 1e-7): round-to-nearest
+/// range reduction and a degree-7 polynomial. For coefficients that sit
+/// close to 1 (decays like e^(-1/(t*sr))), where `exp2`'s 2e-5 would be a
+/// large error in the time constant. Used by the blocks ported from the C++
+/// SDK pedals; `exp2` stays as it is so the other pedals sound the same.
+pub fn exp2_hq(x: f32) -> f32 {
+    let x = x.clamp(-126.0, 126.0);
+    let i = floor(x + 0.5);
+    let t = (x - i) * LN_2;
+    let p = 1.0
+        + t * (1.0
+            + t * (0.5 + t * (1.0 / 6.0 + t * (1.0 / 24.0 + t * (1.0 / 120.0 + t * (1.0 / 720.0 + t * (1.0 / 5040.0)))))));
+    p * f32::from_bits(((i as i32 + 127) as u32) << 23)
+}
+
+/// e^x to near f32 precision; see `exp2_hq`.
+pub fn exp_hq(x: f32) -> f32 {
+    exp2_hq(x * LOG2_E)
 }
 
 /// Decibels to linear gain.
@@ -84,10 +120,44 @@ impl OnePole {
     pub fn set(&mut self, fc: f32) {
         self.a = 1.0 - exp(-TAU * fc / SR);
     }
+    /// The same at any sample rate.
+    pub fn set_at(&mut self, fc: f32, sr: f32) {
+        self.a = 1.0 - exp_hq(-TAU * fc / sr);
+    }
+    pub fn reset(&mut self) {
+        self.z = 0.0;
+    }
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {
         self.z += self.a * (x - self.z);
         self.z
+    }
+}
+
+/// One-pole high-pass (a coupling cap / DC block), at any sample rate:
+/// `y = a·(y1 + x - x1)`, `a = e^(-2π·f/sr)`.
+#[derive(Clone, Copy)]
+pub struct OnePoleHp {
+    a: f32,
+    x1: f32,
+    y1: f32,
+}
+
+impl OnePoleHp {
+    pub const NEW: Self = Self { a: 0.0, x1: 0.0, y1: 0.0 };
+    pub fn set_at(&mut self, fc: f32, sr: f32) {
+        self.a = exp_hq(-TAU * fc / sr);
+    }
+    pub fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.y1 = 0.0;
+    }
+    #[inline]
+    pub fn process(&mut self, x: f32) -> f32 {
+        let y = self.a * (self.y1 + x - self.x1);
+        self.x1 = x;
+        self.y1 = y;
+        y
     }
 }
 
@@ -144,6 +214,63 @@ impl Biquad {
         let a = db(gain_db * 0.5);
         self.set([1.0 + al * a, -2.0 * c, 1.0 - al * a], [1.0 + al / a, -2.0 * c, 1.0 - al / a]);
         self
+    }
+
+    // The same filters at any sample rate (e.g. inside a 2x-oversampled
+    // stage), plus shelves (slope 1), in the Audio EQ Cookbook form.
+
+    fn w_at(f: f32, q: f32, sr: f32) -> (f32, f32, f32) {
+        let w = TAU * f / sr;
+        (cos(w), sin(w), sin(w) / (2.0 * q))
+    }
+
+    pub fn lowpass_at(&mut self, f: f32, q: f32, sr: f32) -> &mut Self {
+        let (c, _, al) = Self::w_at(f, q, sr);
+        self.set([(1.0 - c) * 0.5, 1.0 - c, (1.0 - c) * 0.5], [1.0 + al, -2.0 * c, 1.0 - al]);
+        self
+    }
+
+    pub fn highpass_at(&mut self, f: f32, q: f32, sr: f32) -> &mut Self {
+        let (c, _, al) = Self::w_at(f, q, sr);
+        self.set([(1.0 + c) * 0.5, -(1.0 + c), (1.0 + c) * 0.5], [1.0 + al, -2.0 * c, 1.0 - al]);
+        self
+    }
+
+    pub fn peak_at(&mut self, f: f32, q: f32, gain_db: f32, sr: f32) -> &mut Self {
+        let (c, _, al) = Self::w_at(f, q, sr);
+        let a = db(gain_db * 0.5);
+        self.set([1.0 + al * a, -2.0 * c, 1.0 - al * a], [1.0 + al / a, -2.0 * c, 1.0 - al / a]);
+        self
+    }
+
+    pub fn low_shelf_at(&mut self, f: f32, gain_db: f32, sr: f32) -> &mut Self {
+        let a = db(gain_db * 0.5);
+        let (c, s, _) = Self::w_at(f, 1.0, sr);
+        let al = s * 0.5 * core::f32::consts::SQRT_2;
+        let sq = 2.0 * sqrt(a) * al;
+        self.set(
+            [a * ((a + 1.0) - (a - 1.0) * c + sq), 2.0 * a * ((a - 1.0) - (a + 1.0) * c), a * ((a + 1.0) - (a - 1.0) * c - sq)],
+            [(a + 1.0) + (a - 1.0) * c + sq, -2.0 * ((a - 1.0) + (a + 1.0) * c), (a + 1.0) + (a - 1.0) * c - sq],
+        );
+        self
+    }
+
+    pub fn high_shelf_at(&mut self, f: f32, gain_db: f32, sr: f32) -> &mut Self {
+        let a = db(gain_db * 0.5);
+        let (c, s, _) = Self::w_at(f, 1.0, sr);
+        let al = s * 0.5 * core::f32::consts::SQRT_2;
+        let sq = 2.0 * sqrt(a) * al;
+        self.set(
+            [a * ((a + 1.0) + (a - 1.0) * c + sq), -2.0 * a * ((a - 1.0) + (a + 1.0) * c), a * ((a + 1.0) + (a - 1.0) * c - sq)],
+            [(a + 1.0) - (a - 1.0) * c + sq, 2.0 * ((a - 1.0) - (a + 1.0) * c), (a + 1.0) - (a - 1.0) * c - sq],
+        );
+        self
+    }
+
+    /// Clears the filter's memory.
+    pub fn reset(&mut self) {
+        self.z1 = 0.0;
+        self.z2 = 0.0;
     }
 
     #[inline]

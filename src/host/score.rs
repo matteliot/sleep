@@ -4,6 +4,7 @@
 //! *Dopesmoker* riff.
 
 use crate::pedalkit::guitar::Note;
+use crate::pedalkit::host::{Ev, Score};
 
 // C standard: every string two whole steps down.
 const C2: f32 = 65.41;
@@ -19,12 +20,6 @@ const AS3: f32 = 233.08;
 const C4: f32 = 261.63;
 const DS4: f32 = 311.13;
 
-pub enum Ev {
-    /// Play these notes, strummed this many seconds apart; `true` lets what's ringing carry on.
-    Play(Vec<Note>, f32, bool),
-    Press,
-    Hold,
-}
 
 /// A power chord left to ring in front of a wall of amps.
 fn power(root: f32, vel: f32) -> Vec<Note> {
@@ -43,8 +38,6 @@ enum K {
     /// Slide into the chord from this many semitones below.
     Slide(f32),
 }
-
-pub type Score = Vec<(f64, Ev, &'static str)>;
 
 /// The events (time s, event, section label) and the total length (s).
 pub fn score() -> (Score, f64) {

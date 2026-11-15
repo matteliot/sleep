@@ -2,7 +2,7 @@
 //! parked wah and the 4x12.
 
 use crate::pedalkit::amp::voicing::Voicing;
-use crate::pedalkit::cab::CabSettings;
+use crate::pedalkit::eq::Eq;
 use crate::pedalkit::helpers::Peak;
 use crate::pedalkit::muff::MuffSettings;
 use crate::pedalkit::wah::WahSettings;
@@ -75,9 +75,11 @@ pub const WAH: WahSettings =
 
 /// 4x12, voiced low for C tuning: a big low resonance, a mid dip, speaker
 /// presence and a steep top-end roll-off.
-pub const CAB_4X12: CabSettings = CabSettings {
-    hp_hz: 55.0,
-    bands: [Peak::new(100.0, 0.9, 6.0), Peak::new(500.0, 0.9, -2.5), Peak::new(1800.0, 1.4, 2.0), Peak::new(4000.0, 2.0, -4.0)],
-    lp_hz: 5000.0,
-    lp_q: 0.75,
-};
+pub const CAB_4X12: [Eq; 6] = [
+    Eq::Hp(55.0, 0.707),
+    Eq::Peak(100.0, 0.9, 6.0),
+    Eq::Peak(500.0, 0.9, -2.5),
+    Eq::Peak(1800.0, 1.4, 2.0),
+    Eq::Peak(4000.0, 2.0, -4.0),
+    Eq::Lp(5000.0, 0.75),
+];

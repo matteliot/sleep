@@ -51,3 +51,9 @@ cargo sim                    # -> target/render/sleep_demo.wav
 This renders an original slow doom riff at 52 bpm in C standard through the same patch code. It's not the actual *Dopesmoker* riff: it uses ringing power chords, palm-muted low-C chugs, a bluesy
 flat-five walk and slides. It's played on a modelled electric guitar (`src/pedalkit/guitar.rs`: exact tuning, pick and humbucker, palm mutes, strums, bends, vibrato and human timing). It goes intro chord →
 riff → riff + Muff → lead → riff, then prints the level and stereo width of each section. A render is in [`samples/sleep_demo.wav`](samples/sleep_demo.wav).
+
+## Code layout
+
+- `src/sleep/`: the pedal. `patch.rs` wires it up, `presets.rs` holds every number, and the other files are its blocks.
+- `src/pedalkit/`: shared building blocks (effects, DSP, the Endless ABI, the entry points, the demo renderer). It's a copy of the master in [superPedal](https://github.com/matteliot/superPedal), which also carries this pedal, so don't edit it here.
+- `src/host/`: the `cargo sim` demo (`score.rs` is what it plays).

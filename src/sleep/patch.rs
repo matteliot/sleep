@@ -1,15 +1,21 @@
 //! The whole patch: Muff -> wah -> one guitar into two stacks at once, one per
 //! side (no gate: the wall hums and rings out) -> a 4x12 per side -> level.
 
-use crate::controls::{self, GAIN, LEVEL, TONE};
 use crate::pedalkit::abi::Color;
 use crate::pedalkit::amp::Amp;
-use crate::pedalkit::cab::Cab;
-use crate::pedalkit::dsp::{db, tanh};
-use crate::pedalkit::helpers::Smooth;
+use crate::pedalkit::dsp::db;
+use crate::pedalkit::eq::EqChain;
+use crate::pedalkit::helpers::{Smooth, limit};
 use crate::pedalkit::muff::Muff;
+use crate::pedalkit::pedal::{Param, Pedal};
+use crate::pedalkit::pool::Pool;
 use crate::pedalkit::wah::Wah;
-use crate::presets::{CAB_4X12, MATAMP, MUFF, ORANGE, WAH};
+use super::presets::{CAB_4X12, MATAMP, MUFF, ORANGE, WAH};
+
+/// Knob indices.
+const GAIN: usize = 0;
+const TONE: usize = 1;
+const LEVEL: usize = 2;
 
 /// Preamp gain (dB) at knob 0, and the extra at knob 1.
 const GAIN_MIN_DB: f32 = 14.0;
@@ -22,8 +28,6 @@ const OUT_TRIM: f32 = 0.47;
 const KNOB_GLIDE: f32 = 0.02;
 
 pub struct Patch {
-    ready: bool,
-    error: bool,
     knobs: [f32; 3],
     lead: bool,
     muff_on: bool,
@@ -34,29 +38,52 @@ pub struct Patch {
     wah: Wah,
     amp_l: Amp,
     amp_r: Amp,
-    cab_l: Cab,
-    cab_r: Cab,
+    cab_l: EqChain<6>,
+    cab_r: EqChain<6>,
 }
 
 impl Patch {
-    pub const NEW: Self = Self {
-        ready: false,
-        error: false,
-        knobs: controls::defaults(),
+    /// Points the smoothed values at the knobs and switches. Safe before
+    /// `init`, which re-applies them and snaps.
+    fn retarget(&mut self) {
+        let lead = if self.lead { 1.0 } else { 0.0 };
+        self.gain.set(db(GAIN_MIN_DB + GAIN_RANGE_DB * self.knobs[GAIN]));
+        // Square law: 0 at minimum, unity at 3 o'clock, +5 dB at maximum.
+        let v = self.knobs[LEVEL] / 0.75;
+        self.out.set(v * v * OUT_TRIM * db(LEAD_LEVEL_DB * lead));
+        self.tone.set(self.knobs[TONE]);
+        self.wah.on(self.lead);
+        self.muff.on(self.muff_on);
+    }
+}
+
+impl Pedal for Patch {
+    const PARAMS: [Param; 3] = [
+        // Preamp gain, ~14 to 44 dB.
+        Param { name: "Gain", default: 0.7 },
+        // Amp treble: CCW dark and woolly, CW cutting.
+        Param { name: "Tone", default: 0.4 },
+        // Output; unity at 3 o'clock.
+        Param { name: "Level", default: 0.75 },
+    ];
+    const POOL: usize = 0;
+
+    const NEW: Self = Self {
+        knobs: [Self::PARAMS[0].default, Self::PARAMS[1].default, Self::PARAMS[2].default],
         lead: false,
         muff_on: false,
         gain: Smooth::new(1.0),
         out: Smooth::new(0.0),
-        tone: Smooth::new(controls::PARAMS[TONE].default),
+        tone: Smooth::new(Self::PARAMS[TONE].default),
         muff: Muff::NEW,
         wah: Wah::NEW,
         amp_l: Amp::NEW,
         amp_r: Amp::NEW,
-        cab_l: Cab::NEW,
-        cab_r: Cab::NEW,
+        cab_l: EqChain::NEW,
+        cab_r: EqChain::NEW,
     };
 
-    pub fn init(&mut self) {
+    fn init(&mut self, _: &mut Pool) {
         self.amp_l.init(&ORANGE);
         self.amp_r.init(&MATAMP);
         self.muff.init(&MUFF);
@@ -72,53 +99,27 @@ impl Patch {
         self.tone.snap();
         self.muff.snap();
         self.wah.snap();
-        self.ready = true;
     }
 
-    pub fn ready(&self) -> bool {
-        self.ready
-    }
-
-    /// The firmware didn't provide the working buffer (shown on the LED).
-    pub fn set_error(&mut self) {
-        self.error = true;
-    }
-
-    /// Sets knob `idx` to `v` (0..1); false if there's no such knob.
-    pub fn set_knob(&mut self, idx: usize, v: f32) -> bool {
-        let Some(k) = self.knobs.get_mut(idx) else { return false };
-        *k = v.clamp(0.0, 1.0);
+    fn set_knob(&mut self, idx: usize, v: f32) {
+        self.knobs[idx] = v;
         self.retarget();
-        true
     }
 
     /// Footswitch press: Riff <-> Lead.
-    pub fn toggle_lead(&mut self) {
+    fn press(&mut self) {
         self.lead = !self.lead;
         self.retarget();
     }
 
     /// Footswitch hold: Muff on/off.
-    pub fn toggle_muff(&mut self) {
+    fn hold(&mut self) {
         self.muff_on = !self.muff_on;
         self.retarget();
     }
 
-    /// Points the smoothed values at the knobs and switches. Safe before
-    /// `init`, which re-applies them and snaps.
-    fn retarget(&mut self) {
-        let lead = if self.lead { 1.0 } else { 0.0 };
-        self.gain.set(db(GAIN_MIN_DB + GAIN_RANGE_DB * self.knobs[GAIN]));
-        // Square law: 0 at minimum, unity at 3 o'clock, +5 dB at maximum.
-        let v = self.knobs[LEVEL] / 0.75;
-        self.out.set(v * v * OUT_TRIM * db(LEAD_LEVEL_DB * lead));
-        self.tone.set(self.knobs[TONE]);
-        self.wah.on(self.lead);
-        self.muff.on(self.muff_on);
-    }
-
     #[inline]
-    pub fn tick(&mut self, x: f32) -> (f32, f32) {
+    fn tick(&mut self, x: f32, _: f32) -> (f32, f32) {
         let g = self.gain.tick();
         let out = self.out.tick();
         let t = self.tone.tick();
@@ -130,10 +131,7 @@ impl Patch {
         (limit(l * out), limit(r * out))
     }
 
-    pub fn led(&self) -> Color {
-        if self.error {
-            return Color::Red;
-        }
+    fn led(&self) -> Color {
         match (self.lead, self.muff_on) {
             (false, false) => Color::Beige,
             (true, false) => Color::LightGreen,
@@ -141,10 +139,4 @@ impl Patch {
             (true, true) => Color::DarkLime,
         }
     }
-}
-
-/// Output soft limiter, never reaching ±1.
-#[inline]
-fn limit(x: f32) -> f32 {
-    tanh(x) * 0.98
 }
