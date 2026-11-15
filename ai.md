@@ -21,13 +21,36 @@ It is kept up to date as new requirements are given. Requirements are listed in 
 6. ~~**Buffers are zero-initialized in `.bss` and explicitly zeroed in `patch_init` before use** (rather than shipped as zeros inside the patch image). The delay lines live in a separate `Bufs` static that is all zero at rest, so it lands in `.bss` instead of being stored as zeros in the `.endl`. The `Global` cell is generic; `tick` and the methods that use a delay line take `&mut Bufs`. `patch_init` clears the buffer static in place with `core::ptr::write_bytes` (no heap or `calloc` in `no_std`, and a zeroed copy would be a stack temporary) before `init`: the loader should already have cleared `.bss`, but nothing promises it, and a NaN left in a feedback loop never decays. The firmware working buffer stays unused.~~ Superseded by requirement 8: the patch has no delay lines, so there are no buffers. If a delay line is ever added, this rule applies again.
 7. **Ship the built patch in a `release/` directory at the repo root** (`release/sleep.endl`, a copy of `target/endless/sleep.endl` from `./build-endl.sh`), committed to git, so a user can download it from GitHub and copy it straight to the pedal without building. README has an Install section saying so. Rebuild and recopy it whenever the patch changes.
 8. **`../nirvana` is only a model for structure** (project layout, toolchain and packaging, the `ai.md` process, the release and sample conventions, the demo harness and its modelled guitar). Nothing from nirvana that isn't needed to sound like Sleep belongs in the patch. That removed nirvana's double-track drift (the right stack now hears the same signal, one guitar into two heads), its lead-boost recipe (gain, mid push, level), its noise gate, and with them the delay lines and `Bufs`. The lead echo also went, because Sleep's guitars are dry.
+9. **Modular code: one struct per file, with shared building blocks in helper structs.** `main.rs` only declares modules. Anything two or more structs use goes into a helper struct in `src/helpers.rs`. Look for further chances to split things into modules (amp stages, the knob table, the firmware entry points, the header, the demo harness). Refactors must not change the sound: the `cargo sim` render must stay byte-for-byte identical.
+10. **Make Muff and Wah (and the other reusable blocks) generic enough for future pedals, in a `src/pedalkit/` directory kept inside this project** (not a separate crate yet). Kit blocks take settings structs instead of hard-coded constants. Each pedal keeps its own presets. Kit modules refer to each other only through relative `super::` paths, so the directory can later be lifted into a shared crate unchanged.
 
 ### Implementation decisions (needed to recreate requirement 3)
 
 - **Toolchain and packaging (copied from `../nirvana`).**
   - Language and target: `no_std` Rust, edition 2024, nightly toolchain, `thumbv7em-none-eabihf`.
-  - Copied unchanged: `src/abi.rs` (FxPatchSDK ABI 0x000B header), `src/dsp.rs` (f32-only sin/cos/exp2/tanh approximations, biquads, one-pole, delay lines), `src/guitar.rs` (the demo guitar model; see `../nirvana/ai.md` for its full description), `patch.ld`, `build.rs`, `rust-toolchain.toml`, `.gitignore`, `.cargo/config.toml` (pedal is the default target, `-fp64`, `cargo sim` alias).
+  - Copied (now under `src/pedalkit/`): `src/abi.rs` (FxPatchSDK ABI 0x000B header), `src/dsp.rs` (f32-only sin/cos/exp2/tanh approximations, biquads, one-pole, delay lines), `src/guitar.rs` (the demo guitar model; see `../nirvana/ai.md` for its full description), `patch.ld`, `build.rs`, `rust-toolchain.toml`, `.gitignore`, `.cargo/config.toml` (pedal is the default target, `-fp64`, `cargo sim` alias).
   - `build-endl.sh` is nirvana's with `nirvana` renamed to `sleep`: it makes `target/endless/sleep.endl` with `llvm-objcopy`, checks for f64 instructions and the 512 KB limit, and `--deploy` copies the file to `/Volumes/ENDLESS`.
+- **Module layout (requirements 9 and 10).**
+  - `main.rs`: crate docs and module declarations only.
+  - `pedalkit/` (reusable, pedal-agnostic; `mod.rs` documents it, `#![allow(dead_code)]` since each patch uses only part of it):
+    - `abi.rs`, `dsp.rs` and `guitar.rs` are nirvana's. `dsp.rs` gained `log2`, and `guitar.rs` imports `super::dsp`.
+    - `global.rs`: the generic `Global<T>` cell.
+    - `helpers.rs`: shared building blocks.
+      - `Smooth`: a value gliding to a target. It's used by `Patch`, `Muff` and `Wah`.
+      - `Peak`: an EQ band (f, Q, dB). It's used by `Voicing`, `ToneStack`, `PowerAmp` and `CabSettings`.
+      - `Clip2x`: a 2x-oversampled clipper taking the curve as a closure. It's used by `Preamp` and `PowerAmp`.
+    - `amp/`: `Amp` = `Preamp` → `ToneStack` → `PowerAmp`, all set by one `Voicing` struct.
+      - `Voicing` fields: input HP, trim, triode bias, DC HP, interstage LP, second-stage dB, bass/mid/upper `Peak`s, treble split Hz and `min + span·tone`, power dB and bias, sag amount, attack and release, resonance `Peak`, and output trim.
+    - `muff.rs`: `Muff` + `MuffSettings` (HP, gain dB, LP1, second-stage gain, LP2, tone LP Hz and mix, tone HP Hz and mix, out, fade).
+    - `wah.rs`: `Wah` + `WahSettings` (park Hz, heel and toe Hz, Q, boost dB, fade). It can be parked, or swept with `set_freq(hz)` or `set_position(0..1)`, which is exponential from heel to toe.
+    - `cab.rs`: `Cab` + `CabSettings` (HP Hz, four `Peak` bands, LP Hz and Q).
+  - Sleep-specific:
+    - `presets.rs`: `ORANGE` and `MATAMP` (built from a shared `STACK` base with struct update), `MUFF`, `WAH` (parked at 1 kHz; sweep 400–2200 Hz, unused) and `CAB_4X12`. These hold every number listed under "Signal flow" and "One stack" below.
+    - `patch.rs` (`Patch`): the chain, the knob and switch state, retargeting, the LED and the output limiter.
+    - `controls.rs`: the knob table (`PARAMS`).
+    - `entry.rs`: the firmware's C entry points.
+    - `header.rs` (pedal only): `patch_header` and the panic handler.
+    - `host/`: `mod.rs`, `score.rs`, `stats.rs`, `wav.rs`.
 - **Signal flow.** Input (left jack, no gate) → Muff (crossfaded) → lead wah (crossfaded) → the same signal into two stacks, left "Orange" and right "Matamp" → a 4x12 cab per channel → output.
   - **Muff** (hold, always running, crossfaded over 15 ms): HP 60 Hz, `tanh(28 dB · x)`, one-pole LP 5 kHz, `tanh(4x)`, one-pole LP 4 kHz, then the tone blend `0.6·LP400 + 0.5·HP1200`, × 0.35.
   - **Lead wah** (press, always running, crossfaded over 15 ms): `x + lead·(db(9)-1)·BP1000(Q 2.5)`, a wah parked half-cocked.
@@ -48,7 +71,7 @@ It is kept up to date as new requirements are given. Requirements are listed in 
   - Press: Riff ↔ Lead (crossfaded over 15 ms). The patch starts in Riff, Muff off.
   - Hold: Muff on/off.
   - LED: Riff beige / dark red, Lead light green / dark lime (normal / Muff). Red means the working buffer is missing.
-- **Size.** No delay lines or buffers. The `.endl` is ~9 KB.
+- **Size.** No delay lines or buffers. The `.endl` is ~8 KB (8332 bytes).
 - **Host audition.** `cargo sim` renders an *original* doom riff at 52 bpm in C standard (not the actual *Dopesmoker* riff) on the modelled guitar, at ×0.6 input trim, and writes `target/render/sleep_demo.wav` (~63 s). It prints per-section peak, RMS, side level and L/R correlation, and fails on NaN or full-scale output.
   - Power chords are root, fifth and octave, T60 8 s (sustained in front of the amps), downstrokes 14 ms per string. A chug is the palm-muted low C and its fifth. Timing is nudged by up to ±8 ms, repeatably.
   - Bar A: C5 1.5 beats, C chug 0.5, D#5 0.75, F5 0.5, F#5 0.25, F5 0.5. Bar B: D#5 1 (slid from 2 semitones below), C5 1, G5 1.5 (slid from 1 below), F#5 0.25, F5 0.25. End bar: C5 for 4 beats.

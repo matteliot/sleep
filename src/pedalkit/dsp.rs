@@ -39,6 +39,17 @@ pub fn exp2(x: f32) -> f32 {
     p * f32::from_bits(((i as i32 + 127) as u32) << 23)
 }
 
+/// log2(x) for x > 0; |error| < 1e-5.
+pub fn log2(x: f32) -> f32 {
+    let bits = x.to_bits();
+    let e = ((bits >> 23) & 0xff) as i32 - 127;
+    let m = f32::from_bits((bits & 0x007f_ffff) | 0x3f80_0000); // [1, 2)
+    // ln(m) = 2 atanh(s), s = (m - 1) / (m + 1) <= 1/3.
+    let s = (m - 1.0) / (m + 1.0);
+    let s2 = s * s;
+    e as f32 + 2.0 * LOG2_E * s * (1.0 + s2 * (1.0 / 3.0 + s2 * (1.0 / 5.0 + s2 * (1.0 / 7.0 + s2 * (1.0 / 9.0)))))
+}
+
 pub fn exp(x: f32) -> f32 {
     exp2(x * LOG2_E)
 }
